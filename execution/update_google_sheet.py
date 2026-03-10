@@ -21,7 +21,7 @@ def update_google_sheet():
     """
     input_path = os.path.join(".tmp", "jobs_merged.csv")
     sheet_id = os.getenv("GOOGLE_SHEET_ID")
-    service_account_path = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "service_account.json")
+    service_account_info = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
     logging.info("Starting Google Sheet update process")
 
@@ -29,9 +29,26 @@ def update_google_sheet():
         logging.error("GOOGLE_SHEET_ID is missing in the environment variables.")
         return
 
-    if not os.path.exists(service_account_path):
-        logging.error(f"Service account file {service_account_path} not found.")
+    if not service_account_info:
+        logging.error("GOOGLE_SERVICE_ACCOUNT_JSON is missing.")
         return
+
+    # Check if we have a JSON string or a file path
+    import json
+    if service_account_info.strip().startswith('{'):
+        try:
+            creds_out = json.loads(service_account_info)
+            logging.info("Using service account credentials from JSON string.")
+        except Exception as e:
+            logging.error(f"Failed to parse JSON string: {e}")
+            return
+    else:
+        if not os.path.exists(service_account_info):
+            logging.error(f"Service account file {service_account_info} not found.")
+            return
+        with open(service_account_info, 'r') as f:
+            creds_out = json.load(f)
+        logging.info(f"Using service account credentials from file: {service_account_info}")
 
     if not os.path.exists(input_path):
         logging.error(f"Input file {input_path} does not exist.")
@@ -70,7 +87,7 @@ def update_google_sheet():
             'https://www.googleapis.com/auth/spreadsheets',
             'https://www.googleapis.com/auth/drive'
         ]
-        creds = Credentials.from_service_account_file(service_account_path, scopes=scopes)
+        creds = Credentials.from_service_account_info(creds_out, scopes=scopes)
         client = gspread.authorize(creds)
         spreadsheet = client.open_by_key(sheet_id)
 
