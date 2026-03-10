@@ -1,0 +1,44 @@
+name: Daily 10PM AP Scraper
+
+on:
+  schedule:
+    # Runs at 16:30 UTC every day (10:00 PM IST)
+    - cron: '30 16 * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  scrape-and-push:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Ensure Output Directories Exist
+      run: |
+        mkdir -p .tmp/
+
+    - name: Run Full Scraper Pipeline
+      env:
+        APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN }}
+        TASK_ID_1: ${{ secrets.TASK_ID_1 }}
+        TASK_ID_2: ${{ secrets.TASK_ID_2 }}
+        TASK_ID_3: ${{ secrets.TASK_ID_3 }}
+        GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+        GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+      run: |
+        python execution/run_apify_scraper.py
+        python execution/process_jobs.py
+        python execution/calculate_hiring_intensity.py
+        python execution/generate_dashboard_data.py
+        python execution/update_google_sheet.py

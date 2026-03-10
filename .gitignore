@@ -1,0 +1,15 @@
+# Virtual Environment
+venv/
+.env
+
+# Google Service Account Credentials
+*.json
+
+# Temporary Data Cache & Python Cache
+.tmp/
+__pycache__/
+*.pyc
+
+# Local Streamlit config
+.streamlit/
+*.log

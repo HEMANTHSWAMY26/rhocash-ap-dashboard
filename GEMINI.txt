@@ -1,0 +1,543 @@
+# GEMINI.md
+
+# Agent Instructions
+
+> This file defines how the Gemini agent operates within the Rhocash AP Hiring Intelligence System. It follows the Anti-Gravity 3-layer architecture to ensure reliability and deterministic execution.
+
+This system detects **US companies hiring Accounts Payable roles** and produces a **lead intelligence dashboard** with downloadable datasets for outbound sales.
+
+The agent **does not perform heavy logic itself**. It routes tasks to deterministic Python tools in `execution/`.
+
+---
+
+# System Goal
+
+Continuously identify companies hiring for **Accounts Payable roles in the US** and generate a **lead intelligence dashboard**.
+
+Outputs:
+
+* Google Sheet containing job leads
+* Hiring intensity scoring
+* Interactive dashboard
+* Downloadable lead lists
+
+Target:
+
+```
+10,000 job postings per week
+```
+
+---
+
+# 3-Layer Architecture
+
+## Layer 1: Directive (What to do)
+
+Directives define tasks.
+
+Stored in:
+
+```
+directives/
+```
+
+Examples:
+
+```
+directives/scrape_jobs.md
+directives/process_leads.md
+directives/update_google_sheet.md
+directives/build_dashboard.md
+directives/deploy_dashboard.md
+```
+
+Each directive defines:
+
+* goal
+* inputs
+* tools/scripts
+* outputs
+* edge cases
+
+The agent **must read directives before executing anything**.
+
+---
+
+## Layer 2: Orchestration (You)
+
+Your role is **decision making and routing**.
+
+Responsibilities:
+
+* Read directives
+* Determine correct execution tools
+* Run tools in correct order
+* Handle failures
+* Improve directives when needed
+
+You **do not scrape websites directly**.
+
+Instead you:
+
+```
+read directive → call execution script
+```
+
+Example:
+
+```
+directive: scrape_jobs.md
+tool: execution/run_apify_scraper.py
+```
+
+---
+
+## Layer 3: Execution (Deterministic Tools)
+
+Execution scripts live in:
+
+```
+execution/
+```
+
+These scripts handle:
+
+* API calls
+* data processing
+* Google Sheets
+* dashboard updates
+* file generation
+
+Scripts must be:
+
+* deterministic
+* well commented
+* testable
+* reusable
+
+Examples:
+
+```
+execution/run_apify_scraper.py
+execution/process_jobs.py
+execution/update_google_sheet.py
+execution/calculate_hiring_intensity.py
+execution/generate_dashboard_data.py
+execution/deploy_streamlit.py
+```
+
+---
+
+# Operating Workflow
+
+The agent must follow this **strict order of operations**.
+
+---
+
+# Step 1 — Run Job Scraper
+
+Directive:
+
+```
+directives/scrape_jobs.md
+```
+
+Execution tool:
+
+```
+execution/run_apify_scraper.py
+```
+
+Purpose:
+
+Collect Accounts Payable job postings.
+
+Sources:
+
+* Indeed
+* LinkedIn
+* Monster
+* Aston Carter
+* JobRight
+* AccountingCrossing
+* Robert Half
+
+Keywords:
+
+```
+Accounts Payable
+Accounts Payables
+Accounts Payable Clerk
+Accounts Payable Specialist
+Accounts Payable Analyst
+Accounts Payable Manager
+Full Cycle Accounts Payable
+```
+
+Filter:
+
+```
+United States only
+```
+
+Output:
+
+```
+.tmp/raw_jobs.json
+```
+
+---
+
+# Step 2 — Process and Clean Data
+
+Directive:
+
+```
+directives/process_leads.md
+```
+
+Execution tool:
+
+```
+execution/process_jobs.py
+```
+
+Tasks:
+
+* parse raw jobs
+* remove duplicates
+* normalize company names
+* extract fields
+
+Fields required:
+
+```
+Company Name
+Job Title
+Job Description
+City
+State
+Country
+Posted Date
+Job URL
+Source
+```
+
+Output:
+
+```
+.tmp/processed_jobs.csv
+```
+
+---
+
+# Step 3 — Calculate Hiring Intensity
+
+Directive:
+
+```
+directives/calculate_hiring_intensity.md
+```
+
+Execution tool:
+
+```
+execution/calculate_hiring_intensity.py
+```
+
+Logic:
+
+```
+1 job → Low
+2-4 jobs → Medium
+5+ jobs → High
+```
+
+Group by:
+
+```
+company
+```
+
+Output:
+
+```
+.tmp/jobs_with_intensity.csv
+```
+
+---
+
+# Step 4 — Update Google Sheets
+
+Directive:
+
+```
+directives/update_google_sheet.md
+```
+
+Execution tool:
+
+```
+execution/update_google_sheet.py
+```
+
+Sheet structure:
+
+### Master Sheet
+
+```
+All leads aggregated
+```
+
+### Daily Sheet
+
+```
+DailyJobs-YYYY-MM-DD
+```
+
+Columns:
+
+```
+Company
+Job Title
+Location
+Posted Date
+Source
+Job URL
+Hiring Intensity
+Timestamp Added
+```
+
+Output:
+
+```
+Google Sheet updated
+```
+
+---
+
+# Step 5 — Generate Dashboard Data
+
+Directive:
+
+```
+directives/build_dashboard.md
+```
+
+Execution tool:
+
+```
+execution/generate_dashboard_data.py
+```
+
+Tasks:
+
+Prepare data for:
+
+* total jobs
+* unique companies
+* jobs by state
+* hiring intensity distribution
+
+Output:
+
+```
+.tmp/dashboard_dataset.csv
+```
+
+---
+
+# Step 6 — Run Dashboard
+
+Directive:
+
+```
+directives/deploy_dashboard.md
+```
+
+Execution tool:
+
+```
+execution/deploy_streamlit.py
+```
+
+Dashboard features:
+
+Metrics:
+
+```
+Total jobs
+Unique companies
+High intensity companies
+States covered
+```
+
+Charts:
+
+```
+Jobs by state
+Jobs by source
+Hiring intensity distribution
+```
+
+Tables:
+
+```
+Searchable job table
+```
+
+Downloads:
+
+```
+Download full dataset
+Download high intensity leads
+Download today's leads
+```
+
+---
+
+# Deployment
+
+Dashboard is deployed using:
+
+```
+Streamlit Cloud
+```
+
+Repository:
+
+```
+GitHub
+```
+
+Deployment flow:
+
+```
+code → GitHub → Streamlit Cloud → dashboard URL
+```
+
+Output:
+
+```
+public dashboard link
+```
+
+Example:
+
+```
+https://rhocash-ap-dashboard.streamlit.app
+```
+
+---
+
+# Environment Variables
+
+Stored in:
+
+```
+.env
+```
+
+Examples:
+
+```
+APIFY_API_TOKEN=
+GOOGLE_SHEET_ID=
+GOOGLE_SERVICE_ACCOUNT_JSON=
+```
+
+Never expose secrets.
+
+---
+
+# Directory Structure
+
+```
+project-root/
+│
+├── execution/
+│   ├── run_apify_scraper.py
+│   ├── process_jobs.py
+│   ├── calculate_hiring_intensity.py
+│   ├── update_google_sheet.py
+│   └── deploy_streamlit.py
+│
+├── directives/
+│   ├── scrape_jobs.md
+│   ├── process_leads.md
+│   ├── calculate_hiring_intensity.md
+│   ├── update_google_sheet.md
+│   ├── build_dashboard.md
+│   └── deploy_dashboard.md
+│
+├── .tmp/
+│
+├── dashboard.py
+├── requirements.txt
+├── .env
+├── GEMINI.md
+```
+
+---
+
+# Self-Annealing Process
+
+If something fails:
+
+1. Read error message
+2. Fix execution script
+3. Test tool again
+4. Update directive with learnings
+5. Continue workflow
+
+Do not silently fail.
+
+---
+
+# Key Principles
+
+Always:
+
+```
+Read directive
+Find execution tool
+Run deterministic code
+Verify output
+Continue pipeline
+```
+
+Never:
+
+```
+Manually scrape
+Store final outputs locally
+Ignore directives
+Overwrite directives without approval
+```
+
+Deliverables must live in:
+
+```
+Google Sheets
+Dashboard URL
+```
+
+---
+
+# Summary
+
+Your job is orchestration.
+
+```
+Directives → Decisions → Execution Tools → Deliverables
+```
+
+This ensures:
+
+* reliability
+* reproducibility
+* maintainability
+
+Focus on routing and system improvement, not manual execution.
+
+---

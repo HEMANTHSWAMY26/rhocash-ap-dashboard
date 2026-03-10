@@ -1,0 +1,36 @@
+import subprocess
+import logging
+from datetime import datetime
+import sys
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def run_pipeline():
+    """
+    Executes the complete Accounts Payable Data Mining Pipeline end-to-end.
+    """
+    logging.info(f"[{datetime.now()}] Initiating Manual Pipeline Execution...")
+    
+    scripts = [
+        ("execution/run_apify_scraper.py", "1/5: Extracting Apify Jobs"),
+        ("execution/process_jobs.py", "2/5: Cleaning and Deduplicating"),
+        ("execution/calculate_hiring_intensity.py", "3/5: Calculating Intensity"),
+        ("execution/generate_dashboard_data.py", "4/5: Generating Dashboard Metrics"),
+        ("execution/update_google_sheet.py", "5/5: Syncing Google Sheets")
+    ]
+    
+    for script_path, desc in scripts:
+        logging.info(f"Starting {desc} ({script_path})...")
+        try:
+            # Using check=True to immediately halt pipeline on any critical sub-script failure
+            subprocess.run(["python", script_path], check=True)
+            logging.info(f"✔ Completed {desc}")
+        except subprocess.CalledProcessError as e:
+            logging.error(f"❌ Pipeline halted. Critical error in {script_path}: {e}")
+            sys.exit(1)
+            
+    logging.info(f"[{datetime.now()}] ✅ Pipeline completed successfully.")
+
+if __name__ == "__main__":
+    run_pipeline()
