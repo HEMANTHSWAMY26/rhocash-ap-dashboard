@@ -82,7 +82,7 @@ def fetch_apify_data():
             
         logging.info(f"Checking runs for {name} Task: {task_id}")
         try:
-            runs_list = client.task(task_id).runs().list(limit=50, desc=True).items
+            runs_list = client.task(task_id).runs().list(limit=1000, desc=True).items
             
             for run in runs_list:
                 run_id = run['id']
