@@ -83,35 +83,26 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def clean_df(df):
-    """Universal cleaning: Deduplicates headers, maps columns, and prunes ghost rows."""
+    """Universal cleaning: Maps columns and prunes ghost rows with anchoring."""
     if df.empty: return df
     
-    # 1. Deduplicate/Sanitize Headers (Critical for Sheets with empty columns)
-    new_cols = []
-    seen = {}
-    for col in df.columns:
-        c_str = str(col).strip()
-        if not c_str: c_str = "unnamed"
-        if c_str in seen:
-            seen[c_str] += 1
-            new_cols.append(f"{c_str}_{seen[c_str]}")
-        else:
-            seen[c_str] = 0
-            new_cols.append(c_str)
-    df.columns = new_cols
+    # Ensure all columns are unique strings
+    df.columns = [str(c) for c in df.columns]
 
-    # 2. Content-Based Scoring & Greedy Mapping
-    def score_col(col_data, keywords, must_be_date=False, must_be_url=False):
+    # 1. Content Scoring for Anchoring
+    def get_col_score(col_data, keywords, must_be_date=False, must_be_url=False):
         score = 0
         name_clean = str(col_data.name).lower().replace("_", "").replace(" ", "")
+        # Keyword match
         if any(k in name_clean for k in keywords): score += 5
         
-        non_na = col_data.dropna().head(10)
-        if not non_na.empty:
-            if must_be_url and non_na.astype(str).str.contains('http', case=False).any(): score += 10
+        # Content match (Check first 50 rows)
+        sample = col_data.dropna().head(50).astype(str)
+        if not sample.empty:
+            if must_be_url and sample.str.contains('http', case=False).any(): score += 10
             if must_be_date:
                 try:
-                    is_date = pd.to_datetime(non_na, errors='coerce').notna().mean() > 0.5
+                    is_date = pd.to_datetime(sample, errors='coerce').notna().mean() > 0.4
                     if is_date: score += 10
                 except: pass
         return score
@@ -120,48 +111,47 @@ def clean_df(df):
         'Company': ['company'],
         'Job Title': ['jobtitle', 'title'],
         'Job url': ['joburl', 'url', 'link'],
-        'Location': ['location', 'city'],
+        'Location': ['location', 'city', 'region'],
         'first_seen_date': ['scraped', 'date', 'firstseen'],
         'Intensity': ['intensity'],
         'ERP': ['erp']
     }
     
     final_rename = {}
-    used_orig = set()
+    used_sources = set()
     for target, keywords in map_conf.items():
-        # Score all columns and pick the best one
         best_col = None
         best_score = -1
         for col in df.columns:
-            if col in used_orig: continue
-            score = score_col(df[col], keywords, 
-                             must_be_date=(target == 'first_seen_date'),
-                             must_be_url=(target == 'Job url'))
+            if col in used_sources: continue
+            score = get_col_score(df[col], keywords, 
+                                 must_be_date=(target == 'first_seen_date'),
+                                 must_be_url=(target == 'Job url'))
             if score > best_score and score > 0:
                 best_score = score
                 best_col = col
         if best_col:
             final_rename[best_col] = target
-            used_orig.add(best_col)
+            used_sources.add(best_col)
 
     df = df.rename(columns=final_rename)
 
-    # 3. ABSOLUTE CLEANING
+    # 2. Filtering and Cleaning
     df.replace(r'^\s*$', pd.NA, regex=True, inplace=True)
     
-    # Prune leads that don't have a URL (eliminates 32k ghost rows)
+    # Prune rows that are effectively empty (Absolute rule: MUST have a URL)
     if 'Job url' in df.columns:
         df['Job url'] = df['Job url'].astype(str).str.strip()
         df = df[df['Job url'].str.contains('http', case=False, na=False)].copy()
-    else:
-        # If we didn't find a URL column, try to rescue by dropping empty rows
-        df.dropna(how='all', inplace=True)
+    
+    if df.empty: return df
 
+    # Final pruning based on content
     if 'Company' in df.columns:
-        df['Company'] = df['Company'].astype(str).str.strip().replace(['nan', 'None', '<NA>'], pd.NA)
+        df['Company'] = df['Company'].astype(str).str.strip().replace(['nan', 'None'], pd.NA)
         df.dropna(subset=['Company'], inplace=True)
 
-    # Coerced Date Parsing
+    # Coerce Date format for consistency
     if 'first_seen_date' in df.columns:
         df['first_seen_date'] = pd.to_datetime(df['first_seen_date'], errors='coerce')
         df = df.dropna(subset=['first_seen_date']).copy()
@@ -173,22 +163,22 @@ def clean_df(df):
     if 'Intensity' not in df.columns: df['Intensity'] = 'Low'
     df['Intensity'] = df['Intensity'].fillna('Low').astype(str).str.capitalize()
     
-    df.drop_duplicates(subset=['Job url'] if 'Job url' in df.columns else None, keep='first', inplace=True)
+    if 'Job url' in df.columns:
+        df.drop_duplicates(subset=['Job url'], keep='first', inplace=True)
+        
     return df
 
 @st.cache_data(ttl=60)
 def load_data():
-    """Ironclad Load: Deduplicates headers, maps columns, and prunes ghost rows."""
+    """Robust load: Deduplicates headers and performs cleanup."""
     data_path = os.path.join(".tmp", "jobs_with_intensity.csv")
     df = pd.DataFrame()
     
-    # 1. Try Local Cache
     if os.path.exists(data_path):
         try:
             df = pd.read_csv(data_path)
         except: pass
         
-    # 2. Deployment Fallback: Google Sheets
     if df.empty:
         sheet_id = os.getenv("GOOGLE_SHEET_ID")
         service_account_info = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
@@ -206,9 +196,22 @@ def load_data():
                 client = gspread.authorize(creds)
                 sheet = client.open_by_key(sheet_id).worksheet("Master Sheet")
                 
-                all_raw = sheet.get_all_values()
-                if len(all_raw) > 1:
-                    df = pd.DataFrame(all_raw[1:], columns=all_raw[0])
+                all_vals = sheet.get_all_values()
+                if len(all_vals) > 0:
+                    headers = all_vals[0]
+                    # Deduplicate headers before creating DataFrame
+                    unique_h = []
+                    seen = {}
+                    for i, h in enumerate(headers):
+                        h_clean = str(h).strip() or f"col_{i}"
+                        if h_clean in seen:
+                            seen[h_clean] += 1
+                            unique_h.append(f"{h_clean}_{seen[h_clean]}")
+                        else:
+                            seen[h_clean] = 0
+                            unique_h.append(h_clean)
+                    
+                    df = pd.DataFrame(all_vals[1:], columns=unique_h)
             except Exception as e:
                 st.sidebar.error(f"Sync Detection Error: {e}")
 
