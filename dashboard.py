@@ -121,36 +121,48 @@ def load_data():
     if not df.empty:
         # 1. Standardize column names for greedy matching
         orig_cols = df.columns.tolist()
+        used_cols = set()
         
-        # 2. Greedy Identification Strategy
+        # 2. Exclusive Greedy Identification
         def find_col(possible_names):
             for col in orig_cols:
+                if col in used_cols: continue
                 c_low = str(col).lower().replace("_", "").replace(" ", "")
                 if any(p in c_low for p in possible_names):
+                    used_cols.add(col)
                     return col
             return None
 
-        # Map key columns
-        map_conf = {
-            'Company': find_col(['company']),
-            'Job Title': find_col(['jobtitle', 'title']),
-            'Location': find_col(['location', 'city', 'region']),
-            'Job url': find_col(['joburl', 'url', 'link']),
-            'Intensity': find_col(['intensity']),
-            'ERP': find_col(['erp']),
-            'first_seen_date': find_col(['scrapeddate', 'firstseen', 'date']),
-            'Job Description': find_col(['description', 'jobdesc'])
-        }
+        # Map key columns with priority
+        new_names = {}
+        for target, keywords in [
+            ('Company', ['company']),
+            ('Job Title', ['jobtitle', 'title']),
+            ('Job url', ['joburl', 'url', 'link']),
+            ('Location', ['location', 'city', 'region']),
+            ('Intensity', ['intensity']),
+            ('ERP', ['erp']),
+            ('first_seen_date', ['scrapeddate', 'firstseen', 'date']),
+            ('Job Description', ['description', 'jobdesc'])
+        ]:
+            found = find_col(keywords)
+            if found:
+                new_names[found] = target
 
-        # Rename only what we found
-        df = df.rename(columns={v: k for k, v in map_conf.items() if v})
+        # Rename only what we found, uniquely
+        df = df.rename(columns=new_names)
 
         # 3. Aggressive Ghost Row Removal
         # Convert all whitespace/empty strings to NA
         df.replace(r'^\s*$', pd.NA, regex=True, inplace=True)
+        
+        # Safer loop for cleaning objects
         for col in df.columns:
-            if df[col].dtype == 'object':
-                df[col] = df[col].astype(str).str.strip().replace('nan', pd.NA).replace('None', pd.NA)
+            try:
+                # Only operate on object/string columns
+                if pd.api.types.is_object_dtype(df[col]):
+                    df[col] = df[col].astype(str).str.strip().replace(['nan', 'None', 'NAT'], pd.NA)
+            except: pass
 
         # Drop rows where more than 50% of the key lead columns are empty
         key_lead_cols = ['Company', 'Job Title', 'Job url']
@@ -159,7 +171,7 @@ def load_data():
             # A lead must have a company OR a title to be real
             df.dropna(subset=available_keys, how='all', inplace=True)
             # Remove rows where MOST of the data is NA
-            df = df[df.isnull().sum(axis=1) < (len(df.columns) * 0.7)]
+            df = df[df.isnull().sum(axis=1) < (len(df.columns) * 0.8)]
         
         # 4. Defaults for Metrics Safety
         if 'Intensity' not in df.columns: df['Intensity'] = 'Low'
