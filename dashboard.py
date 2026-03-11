@@ -113,7 +113,17 @@ def load_data():
                 creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
                 client = gspread.authorize(creds)
                 sheet = client.open_by_key(sheet_id).worksheet("Master Sheet")
-                df = pd.DataFrame(sheet.get_all_records())
+                
+                # Fetch all values and handle potential empty/duplicate headers
+                all_values = sheet.get_all_values()
+                if all_values:
+                    headers = all_values[0]
+                    # Identify valid columns (non-empty headers)
+                    valid_indices = [i for i, h in enumerate(headers) if h.strip() != ""]
+                    if valid_indices:
+                        clean_headers = [headers[i] for i in valid_indices]
+                        clean_data = [[row[i] for i in valid_indices] for row in all_values[1:]]
+                        df = pd.DataFrame(clean_data, columns=clean_headers)
             except Exception as e:
                 st.sidebar.error(f"Cloud Sync Error: {e}")
 
