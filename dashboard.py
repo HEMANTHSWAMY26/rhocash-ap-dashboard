@@ -84,25 +84,23 @@ st.markdown("""
 
 @st.cache_data(ttl=300)
 def load_data():
-    """Load dataset from local cache or fallback to Google Sheets."""
+    """Smart load system: Aggressively cleans ghost rows and maps headers."""
     data_path = os.path.join(".tmp", "jobs_with_intensity.csv")
     df = pd.DataFrame()
     
-    # 1. Try Local Cache
+    # 1. Try Local Cache First
     if os.path.exists(data_path):
         try:
             df = pd.read_csv(data_path)
-            # intensity usually added locally
         except: pass
         
-    # 2. Fallback to Google Sheets
+    # 2. Hard Fallback to Google Sheets for Deployment
     if df.empty:
         sheet_id = os.getenv("GOOGLE_SHEET_ID")
         service_account_info = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
         
         if sheet_id and service_account_info:
             try:
-                # Handle both file path and literal JSON string
                 if service_account_info.strip().startswith('{'):
                     creds_info = json.loads(service_account_info)
                 else:
@@ -114,55 +112,62 @@ def load_data():
                 client = gspread.authorize(creds)
                 sheet = client.open_by_key(sheet_id).worksheet("Master Sheet")
                 
-                # Fetch all values and handle potential empty/duplicate headers
                 all_values = sheet.get_all_values()
                 if all_values:
-                    headers = [str(h).strip().lower() for h in all_values[0]]
-                    valid_indices = [i for i, h in enumerate(headers) if h != ""]
+                    raw_headers = [str(h).strip().lower().replace("_", " ").replace(" ", "") for h in all_values[0]]
+                    valid_indices = [i for i, h in enumerate(raw_headers) if h != ""]
                     
                     if valid_indices:
-                        clean_headers = [headers[i] for i in valid_indices]
+                        clean_headers = [raw_headers[i] for i in valid_indices]
                         clean_data = [[row[i] for i in valid_indices] for row in all_values[1:]]
                         df = pd.DataFrame(clean_data, columns=clean_headers)
-                        
-                        # CRITICAL: Filter out truly empty rows from Google Sheets
-                        # Many sheets have 1000s of empty rows that appear as rows of empty strings
-                        df.replace('', pd.NA, inplace=True)
-                        # A row is valid if it has at least a job title or company
-                        if 'company' in df.columns or 'job_title' in df.columns:
-                            valid_cols = [c for c in ['company', 'job_title', 'job_url'] if c in df.columns]
-                            df.dropna(subset=valid_cols, how='all', inplace=True)
             except Exception as e:
                 st.sidebar.error(f"Cloud Sync Error: {e}")
 
     if not df.empty:
-        # Standardize column naming
-        df.columns = [c.lower() for c in df.columns]
+        # AGGRESSIVE CLEANING
+        # 1. Standardize column names (remove underscores and spaces for matching)
+        df.columns = [str(c).strip().lower().replace("_", "").replace(" ", "") for c in df.columns]
+        
+        # 2. Fuzzy Rename Map
         rename_map = {
             'company': 'Company',
-            'job_title': 'Job Title',
+            'jobtitle': 'Job Title',
             'location': 'Location',
-            'scraped_date': 'first_seen_date',
-            'job_url': 'Job url',
+            'scrapeddate': 'first_seen_date',
+            'firstseendate': 'first_seen_date',
+            'joburl': 'Job url',
             'erp': 'ERP',
             'description': 'Job Description',
             'intensity': 'Intensity'
         }
-        df.rename(columns=rename_map, inplace=True)
+        df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns}, inplace=True)
+
+        # 3. Ghost Row Extermination: Filter out rows that are effectively empty strings or just whitespace
+        # Convert empty-looking strings to NA
+        df.replace(r'^\s*$', pd.NA, regex=True, inplace=True)
         
-        # Ensure Intensity exists if missing from sheet (older runs)
-        if 'Intensity' not in df.columns:
-            df['Intensity'] = 'Low' 
-        else:
-            df['Intensity'] = df['Intensity'].fillna('Low')
-            
-        # Ensure first_seen_date exists
+        # A record is ONLY valid if it has a non-empty Company and Job Title (or URL)
+        valid_cols = [c for c in ['Company', 'Job Title', 'Job url'] if c in df.columns]
+        if valid_cols:
+            df.dropna(subset=valid_cols, how='all', inplace=True)
+            # Further strip everything
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    df[col] = df[col].astype(str).str.strip().replace('nan', pd.NA).replace('None', pd.NA)
+
+        # 4. Fix missing analytics columns on the fly
+        if 'Intensity' not in df.columns: df['Intensity'] = 'Low'
+        else: df['Intensity'] = df['Intensity'].fillna('Low')
+        
         if 'first_seen_date' not in df.columns:
+            # Fallback to current date or 'posted' if available
             df['first_seen_date'] = datetime.today().strftime('%Y-%m-%d')
         else:
             df['first_seen_date'] = df['first_seen_date'].fillna(datetime.today().strftime('%Y-%m-%d'))
-            
+
         return df
+    
     return pd.DataFrame(columns=['Company', 'Job Title', 'Location', 'Intensity', 'ERP', 'first_seen_date', 'Job url'])
 
 def run_app():
@@ -192,6 +197,10 @@ def run_app():
                 system_sched = cfg.get("schedule", system_sched)
                 last_sync = cfg.get("last_sync", last_sync)
         except: pass
+    else:
+        # Fallback for cloud: show latest date in dataset
+        if not df.empty and 'first_seen_date' in df.columns:
+            last_sync = f"Latest Lead: {df['first_seen_date'].max()}"
 
     st.sidebar.markdown('---')
     st.sidebar.markdown('### 🤖 Sync Automation')
