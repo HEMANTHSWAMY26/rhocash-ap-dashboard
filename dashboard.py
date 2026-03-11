@@ -82,9 +82,103 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def clean_df(df):
+    """Universal cleaning: Deduplicates headers, maps columns, and prunes ghost rows."""
+    if df.empty: return df
+    
+    # 1. Deduplicate/Sanitize Headers (Critical for Sheets with empty columns)
+    new_cols = []
+    seen = {}
+    for col in df.columns:
+        c_str = str(col).strip()
+        if not c_str: c_str = "unnamed"
+        if c_str in seen:
+            seen[c_str] += 1
+            new_cols.append(f"{c_str}_{seen[c_str]}")
+        else:
+            seen[c_str] = 0
+            new_cols.append(c_str)
+    df.columns = new_cols
+
+    # 2. Content-Based Scoring & Greedy Mapping
+    def score_col(col_data, keywords, must_be_date=False, must_be_url=False):
+        score = 0
+        name_clean = str(col_data.name).lower().replace("_", "").replace(" ", "")
+        if any(k in name_clean for k in keywords): score += 5
+        
+        non_na = col_data.dropna().head(10)
+        if not non_na.empty:
+            if must_be_url and non_na.astype(str).str.contains('http', case=False).any(): score += 10
+            if must_be_date:
+                try:
+                    is_date = pd.to_datetime(non_na, errors='coerce').notna().mean() > 0.5
+                    if is_date: score += 10
+                except: pass
+        return score
+
+    map_conf = {
+        'Company': ['company'],
+        'Job Title': ['jobtitle', 'title'],
+        'Job url': ['joburl', 'url', 'link'],
+        'Location': ['location', 'city'],
+        'first_seen_date': ['scraped', 'date', 'firstseen'],
+        'Intensity': ['intensity'],
+        'ERP': ['erp']
+    }
+    
+    final_rename = {}
+    used_orig = set()
+    for target, keywords in map_conf.items():
+        # Score all columns and pick the best one
+        best_col = None
+        best_score = -1
+        for col in df.columns:
+            if col in used_orig: continue
+            score = score_col(df[col], keywords, 
+                             must_be_date=(target == 'first_seen_date'),
+                             must_be_url=(target == 'Job url'))
+            if score > best_score and score > 0:
+                best_score = score
+                best_col = col
+        if best_col:
+            final_rename[best_col] = target
+            used_orig.add(best_col)
+
+    df = df.rename(columns=final_rename)
+
+    # 3. ABSOLUTE CLEANING
+    df.replace(r'^\s*$', pd.NA, regex=True, inplace=True)
+    
+    # Prune leads that don't have a URL (eliminates 32k ghost rows)
+    if 'Job url' in df.columns:
+        df['Job url'] = df['Job url'].astype(str).str.strip()
+        df = df[df['Job url'].str.contains('http', case=False, na=False)].copy()
+    else:
+        # If we didn't find a URL column, try to rescue by dropping empty rows
+        df.dropna(how='all', inplace=True)
+
+    if 'Company' in df.columns:
+        df['Company'] = df['Company'].astype(str).str.strip().replace(['nan', 'None', '<NA>'], pd.NA)
+        df.dropna(subset=['Company'], inplace=True)
+
+    # Coerced Date Parsing
+    if 'first_seen_date' in df.columns:
+        df['first_seen_date'] = pd.to_datetime(df['first_seen_date'], errors='coerce')
+        df = df.dropna(subset=['first_seen_date']).copy()
+        df['first_seen_date'] = df['first_seen_date'].dt.strftime('%Y-%m-%d')
+    else:
+        df['first_seen_date'] = datetime.today().strftime('%Y-%m-%d')
+        
+    # Analytics Safety
+    if 'Intensity' not in df.columns: df['Intensity'] = 'Low'
+    df['Intensity'] = df['Intensity'].fillna('Low').astype(str).str.capitalize()
+    
+    df.drop_duplicates(subset=['Job url'] if 'Job url' in df.columns else None, keep='first', inplace=True)
+    return df
+
 @st.cache_data(ttl=60)
 def load_data():
-    """Ironclad Load: Uses content-based column matching and absolute pruning."""
+    """Ironclad Load: Deduplicates headers, maps columns, and prunes ghost rows."""
     data_path = os.path.join(".tmp", "jobs_with_intensity.csv")
     df = pd.DataFrame()
     
@@ -92,10 +186,6 @@ def load_data():
     if os.path.exists(data_path):
         try:
             df = pd.read_csv(data_path)
-            if not df.empty:
-                # Ensure date column name is consistent locally
-                if 'scraped_date' in df.columns:
-                    df.rename(columns={'scraped_date': 'first_seen_date'}, inplace=True)
         except: pass
         
     # 2. Deployment Fallback: Google Sheets
@@ -118,69 +208,11 @@ def load_data():
                 
                 all_raw = sheet.get_all_values()
                 if len(all_raw) > 1:
-                    raw_df = pd.DataFrame(all_raw[1:], columns=all_raw[0])
-                    raw_df.replace(r'^\s*$', pd.NA, regex=True, inplace=True)
-                    
-                    # --- Content-Based Column Detection ---
-                    def score_col(col_data, keywords, must_be_date=False, must_be_url=False):
-                        col_str = col_data.astype(str).str.lower()
-                        score = 0
-                        # 1. Keyword match in name
-                        name_low = str(col_data.name).lower().replace("_", "").replace(" ", "")
-                        if any(k in name_low for k in keywords): score += 5
-                        
-                        # 2. Content validation
-                        non_na = col_data.dropna().head(10)
-                        if not non_na.empty:
-                            if must_be_url and non_na.str.contains('http', case=False).any(): score += 10
-                            if must_be_date:
-                                try:
-                                    pd.to_datetime(non_na, errors='coerce').notna().mean() > 0.5
-                                    score += 10
-                                except: pass
-                        return score
-
-                    # Identify columns by scouting the first 100 rows
-                    scout_df = raw_df.head(100)
-                    id_map = {
-                        'Company': max(raw_df.columns, key=lambda c: score_col(scout_df[c], ['company'])),
-                        'Job Title': max(raw_df.columns, key=lambda c: score_col(scout_df[c], ['jobtitle', 'title'])),
-                        'Job url': max(raw_df.columns, key=lambda c: score_col(scout_df[c], ['joburl', 'url', 'link'], must_be_url=True)),
-                        'Location': max(raw_df.columns, key=lambda c: score_col(scout_df[c], ['location', 'city'])),
-                        'first_seen_date': max(raw_df.columns, key=lambda c: score_col(scout_df[c], ['scraped', 'date', 'firstseen'], must_be_date=True)),
-                        'Intensity': max(raw_df.columns, key=lambda c: score_col(scout_df[c], ['intensity'])),
-                        'ERP': max(raw_df.columns, key=lambda c: score_col(scout_df[c], ['erp']))
-                    }
-                    
-                    # Create the cleaned dataframe using detected columns
-                    df = raw_df.rename(columns={v: k for k, v in id_map.items()})
-                    df = df[[k for k in id_map.keys() if k in df.columns]]
+                    df = pd.DataFrame(all_raw[1:], columns=all_raw[0])
             except Exception as e:
                 st.sidebar.error(f"Sync Detection Error: {e}")
 
-    if not df.empty:
-        # ABSOLUTE CLEANING
-        # 1. Row Pruning: A lead MUST have a valid looking URL and a Company name
-        df['Job url'] = df['Job url'].astype(str).str.strip()
-        df = df[df['Job url'].str.contains('http', case=False, na=False)].copy()
-        
-        df['Company'] = df['Company'].astype(str).str.strip().replace(['nan', 'None', '<NA>'], pd.NA)
-        df.dropna(subset=['Company'], inplace=True)
-
-        # 2. Coerced Date Parsing (Prevents app crashes on bad data)
-        df['first_seen_date'] = pd.to_datetime(df['first_seen_date'], errors='coerce')
-        # Drop rows where date is completely unparseable (unlikely after URL/Company prune)
-        df = df.dropna(subset=['first_seen_date']).copy()
-        df['first_seen_date'] = df['first_seen_date'].dt.strftime('%Y-%m-%d')
-        
-        # 3. Analytics Safety
-        if 'Intensity' not in df.columns: df['Intensity'] = 'Low'
-        df['Intensity'] = df['Intensity'].fillna('Low').astype(str).str.capitalize()
-        
-        # 4. Final Deduplication (Absolute fallback)
-        df.drop_duplicates(subset=['Job url'], keep='first', inplace=True)
-
-        return df
+    return clean_df(df)
     
     return pd.DataFrame(columns=['Company', 'Job Title', 'Location', 'Intensity', 'ERP', 'first_seen_date', 'Job url'])
     
