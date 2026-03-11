@@ -51,8 +51,8 @@ def update_google_sheet():
             return
 
         # Define Schema based on System Prompt
-        # Fields: job_title, company, location, description, job_url, source, scraped_date, erp, run_id
-        expected_cols = ['job_title', 'company', 'location', 'description', 'job_url', 'source', 'scraped_date', 'erp', 'run_id']
+        # Fields: job_title, company, location, description, job_url, source, scraped_date, erp, run_id, intensity
+        expected_cols = ['job_title', 'company', 'location', 'description', 'job_url', 'source', 'scraped_date', 'erp', 'run_id', 'intensity']
         
         # Ensure all columns exist
         for col in expected_cols:

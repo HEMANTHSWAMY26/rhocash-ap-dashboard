@@ -117,13 +117,21 @@ def load_data():
                 # Fetch all values and handle potential empty/duplicate headers
                 all_values = sheet.get_all_values()
                 if all_values:
-                    headers = all_values[0]
-                    # Identify valid columns (non-empty headers)
-                    valid_indices = [i for i, h in enumerate(headers) if h.strip() != ""]
+                    headers = [str(h).strip().lower() for h in all_values[0]]
+                    valid_indices = [i for i, h in enumerate(headers) if h != ""]
+                    
                     if valid_indices:
                         clean_headers = [headers[i] for i in valid_indices]
                         clean_data = [[row[i] for i in valid_indices] for row in all_values[1:]]
                         df = pd.DataFrame(clean_data, columns=clean_headers)
+                        
+                        # CRITICAL: Filter out truly empty rows from Google Sheets
+                        # Many sheets have 1000s of empty rows that appear as rows of empty strings
+                        df.replace('', pd.NA, inplace=True)
+                        # A row is valid if it has at least a job title or company
+                        if 'company' in df.columns or 'job_title' in df.columns:
+                            valid_cols = [c for c in ['company', 'job_title', 'job_url'] if c in df.columns]
+                            df.dropna(subset=valid_cols, how='all', inplace=True)
             except Exception as e:
                 st.sidebar.error(f"Cloud Sync Error: {e}")
 
@@ -142,13 +150,17 @@ def load_data():
         }
         df.rename(columns=rename_map, inplace=True)
         
-        # Ensure Intensity exists if missing from sheet
+        # Ensure Intensity exists if missing from sheet (older runs)
         if 'Intensity' not in df.columns:
-            df['Intensity'] = 'Low' # Default to low if not computed
+            df['Intensity'] = 'Low' 
+        else:
+            df['Intensity'] = df['Intensity'].fillna('Low')
             
         # Ensure first_seen_date exists
         if 'first_seen_date' not in df.columns:
             df['first_seen_date'] = datetime.today().strftime('%Y-%m-%d')
+        else:
+            df['first_seen_date'] = df['first_seen_date'].fillna(datetime.today().strftime('%Y-%m-%d'))
             
         return df
     return pd.DataFrame(columns=['Company', 'Job Title', 'Location', 'Intensity', 'ERP', 'first_seen_date', 'Job url'])
