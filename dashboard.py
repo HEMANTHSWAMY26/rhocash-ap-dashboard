@@ -82,19 +82,19 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def load_data():
-    """Smart load system: Aggressively cleans ghost rows and maps headers."""
+    """Ultra-Robust Load: Prunes ghost rows and matches columns greedily."""
     data_path = os.path.join(".tmp", "jobs_with_intensity.csv")
     df = pd.DataFrame()
     
-    # 1. Try Local Cache First
+    # 1. Try Local Cache
     if os.path.exists(data_path):
         try:
             df = pd.read_csv(data_path)
         except: pass
         
-    # 2. Hard Fallback to Google Sheets for Deployment
+    # 2. Hard Fallback to Google Sheets
     if df.empty:
         sheet_id = os.getenv("GOOGLE_SHEET_ID")
         service_account_info = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
@@ -113,60 +113,66 @@ def load_data():
                 sheet = client.open_by_key(sheet_id).worksheet("Master Sheet")
                 
                 all_values = sheet.get_all_values()
-                if all_values:
-                    raw_headers = [str(h).strip().lower().replace("_", " ").replace(" ", "") for h in all_values[0]]
-                    valid_indices = [i for i, h in enumerate(raw_headers) if h != ""]
-                    
-                    if valid_indices:
-                        clean_headers = [raw_headers[i] for i in valid_indices]
-                        clean_data = [[row[i] for i in valid_indices] for row in all_values[1:]]
-                        df = pd.DataFrame(clean_data, columns=clean_headers)
+                if all_values and len(all_values) > 1:
+                    df = pd.DataFrame(all_values[1:], columns=all_values[0])
             except Exception as e:
                 st.sidebar.error(f"Cloud Sync Error: {e}")
 
     if not df.empty:
-        # AGGRESSIVE CLEANING
-        # 1. Standardize column names (remove underscores and spaces for matching)
-        df.columns = [str(c).strip().lower().replace("_", "").replace(" ", "") for c in df.columns]
+        # 1. Standardize column names for greedy matching
+        orig_cols = df.columns.tolist()
         
-        # 2. Fuzzy Rename Map
-        rename_map = {
-            'company': 'Company',
-            'jobtitle': 'Job Title',
-            'location': 'Location',
-            'scrapeddate': 'first_seen_date',
-            'firstseendate': 'first_seen_date',
-            'joburl': 'Job url',
-            'erp': 'ERP',
-            'description': 'Job Description',
-            'intensity': 'Intensity'
+        # 2. Greedy Identification Strategy
+        def find_col(possible_names):
+            for col in orig_cols:
+                c_low = str(col).lower().replace("_", "").replace(" ", "")
+                if any(p in c_low for p in possible_names):
+                    return col
+            return None
+
+        # Map key columns
+        map_conf = {
+            'Company': find_col(['company']),
+            'Job Title': find_col(['jobtitle', 'title']),
+            'Location': find_col(['location', 'city', 'region']),
+            'Job url': find_col(['joburl', 'url', 'link']),
+            'Intensity': find_col(['intensity']),
+            'ERP': find_col(['erp']),
+            'first_seen_date': find_col(['scrapeddate', 'firstseen', 'date']),
+            'Job Description': find_col(['description', 'jobdesc'])
         }
-        df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns}, inplace=True)
 
-        # 3. Ghost Row Extermination: Filter out rows that are effectively empty strings or just whitespace
-        # Convert empty-looking strings to NA
+        # Rename only what we found
+        df = df.rename(columns={v: k for k, v in map_conf.items() if v})
+
+        # 3. Aggressive Ghost Row Removal
+        # Convert all whitespace/empty strings to NA
         df.replace(r'^\s*$', pd.NA, regex=True, inplace=True)
-        
-        # A record is ONLY valid if it has a non-empty Company and Job Title (or URL)
-        valid_cols = [c for c in ['Company', 'Job Title', 'Job url'] if c in df.columns]
-        if valid_cols:
-            df.dropna(subset=valid_cols, how='all', inplace=True)
-            # Further strip everything
-            for col in df.columns:
-                if df[col].dtype == 'object':
-                    df[col] = df[col].astype(str).str.strip().replace('nan', pd.NA).replace('None', pd.NA)
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                df[col] = df[col].astype(str).str.strip().replace('nan', pd.NA).replace('None', pd.NA)
 
-        # 4. Fix missing analytics columns on the fly
+        # Drop rows where more than 50% of the key lead columns are empty
+        key_lead_cols = ['Company', 'Job Title', 'Job url']
+        available_keys = [c for c in key_lead_cols if c in df.columns]
+        if available_keys:
+            # A lead must have a company OR a title to be real
+            df.dropna(subset=available_keys, how='all', inplace=True)
+            # Remove rows where MOST of the data is NA
+            df = df[df.isnull().sum(axis=1) < (len(df.columns) * 0.7)]
+        
+        # 4. Defaults for Metrics Safety
         if 'Intensity' not in df.columns: df['Intensity'] = 'Low'
         else: df['Intensity'] = df['Intensity'].fillna('Low')
         
         if 'first_seen_date' not in df.columns:
-            # Fallback to current date or 'posted' if available
             df['first_seen_date'] = datetime.today().strftime('%Y-%m-%d')
         else:
             df['first_seen_date'] = df['first_seen_date'].fillna(datetime.today().strftime('%Y-%m-%d'))
 
         return df
+    
+    return pd.DataFrame(columns=['Company', 'Job Title', 'Location', 'Intensity', 'ERP', 'first_seen_date', 'Job url'])
     
     return pd.DataFrame(columns=['Company', 'Job Title', 'Location', 'Intensity', 'ERP', 'first_seen_date', 'Job url'])
 
