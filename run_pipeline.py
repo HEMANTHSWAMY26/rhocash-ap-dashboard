@@ -13,11 +13,10 @@ def run_pipeline():
     logging.info(f"[{datetime.now()}] Initiating Manual Pipeline Execution...")
     
     scripts = [
-        ("execution/run_apify_scraper.py", "1/5: Extracting Apify Jobs"),
-        ("execution/process_jobs.py", "2/5: Cleaning and Deduplicating"),
-        ("execution/calculate_hiring_intensity.py", "3/5: Calculating Intensity"),
-        ("execution/generate_dashboard_data.py", "4/5: Generating Dashboard Metrics"),
-        ("execution/update_google_sheet.py", "5/5: Syncing Google Sheets")
+        ("execution/fetch_apify_data.py", "1/4: Fetching Apify Historical Runs"),
+        ("execution/process_jobs.py", "2/4: Normalizing and Cleaning Leads"),
+        ("execution/calculate_hiring_intensity.py", "3/4: Calculating Hiring Intensity"),
+        ("execution/update_google_sheet.py", "4/4: Syncing with Google Sheets Master")
     ]
     
     for script_path, desc in scripts:

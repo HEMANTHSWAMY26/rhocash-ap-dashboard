@@ -25,17 +25,17 @@ def calculate_intensity():
             df = pd.read_csv(input_path)
         except pd.errors.EmptyDataError:
             logging.warning(f"Input file {input_path} is completely empty (EmptyDataError). Outputting identical empty dataset.")
-            pd.DataFrame(columns=['Company', 'Hiring Intensity']).to_csv(output_path, index=False)
+            pd.DataFrame(columns=['company', 'Intensity']).to_csv(output_path, index=False)
             return
             
         if df.empty:
             logging.warning("Input dataset is empty. Outputting identical empty dataset.")
-            df['Hiring Intensity'] = []
+            df['Intensity'] = []
             df.to_csv(output_path, index=False)
             return
 
         # Group by Company and count the number of jobs
-        job_counts = df.groupby('Company').size().reset_index(name='Job Count')
+        job_counts = df.groupby('company').size().reset_index(name='Job Count')
         
         # Define logic: 1 job -> Low, 2-4 -> Medium, 5+ -> High
         def get_intensity(count):
@@ -51,7 +51,7 @@ def calculate_intensity():
         logging.info(f"Calculated intensity for {len(job_counts)} unique companies.")
 
         # Merge the intensity metric back into the main jobs dataset
-        merged_df = pd.merge(df, job_counts[['Company', 'Intensity']], on='Company', how='left')
+        merged_df = pd.merge(df, job_counts[['company', 'Intensity']], on='company', how='left')
 
         # Save output
         merged_df.to_csv(output_path, index=False)
